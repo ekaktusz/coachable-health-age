@@ -1,13 +1,33 @@
-# Coachable Health Age (core only)
+# Coachable Health Age
 
-Independent implementation of [arXiv:2611.08568v1](https://arxiv.org/html/2611.08568v1#S4.SS1), equations 1–6 and 8, with the paper’s adult output floor. This is a wearable risk-equivalent coaching score, not a clinical or epigenetic biological age, and not a reproduction of any app result. No SensorWM or optional domains are used.
+A Python tool for estimating **wearable-based biological age** using the [Coachable Health Age method published by Google Research](https://arxiv.org/html/2611.08568v1#S4.SS1).
+
+The idea: start with your actual age, then use published links between everyday wearable measurements and health risk to adjust it up or down. The calculator shows what each input contributed, so you can see why you got that number.
+
+## What goes in
+
+- Resting heart rate (bpm)
+- Average daily steps
+- Average hours of sleep per night
+- Average weekly Active Zone Minutes (AZM)
+
+## Try it
+
+No account or extra Python packages needed for the example:
 
 ```sh
-python3 -m unittest -v
-python3 cha.py --age 40 --rhr 60 --steps 9000 --sleep-hours 7 --weekly-azm 500
-python3 google_health.py --mcp-url "$GOOGLE_HEALTH_MCP_URL"
+python3 cha.py --age 40 --rhr 65 --steps 8500 \
+  --sleep-hours 7 --weekly-azm 180
 ```
 
-The last command checks coverage through yesterday; give `--birth-date YYYY-MM-DD` to calculate as of the last completed local day, or apply `report(coverage, age)` in-process. It targets an already authenticated Google Health MCP server. Use the trusted endpoint’s HTTPS URL directly; redirects are not followed. For a local server or tunnel at `127.0.0.1` or `::1`, add `--allow-loopback-http` to permit plaintext on that connection only. It does not save individual measurements or send data to any additional service. Console output contains sensitive summary values.
+**Result: 39.0 years**, about one year below the example’s actual age.
 
-The Google Health adapter is not the authors’ preprocessing. It queries 90 completed days, looks at the latest 12 whole seven-day blocks, requires at least five blocks with at least two dates having all four core measurements, and uses those aligned days for the three daily features. It uses Google’s daily RHR and AZM rather than reconstructing the All of Us study’s daily-minimum HR and legacy activity proxies. Main sleep is assigned to the local wake date. Google’s AZM rollup sums earned minutes, already intensity-weighted. A point estimate requires at least five valid weeks and explicit AZM on all seven days of every valid week; if incomplete, a sensitivity interval uses the recorded total as the lower bound on AZM and the paper’s 500 AZM scoring plateau as the most favorable scoring case. This is sensitivity to AZM only, not a statistical confidence interval. It does not account for missingness in other features, measurement error, or differences between devices. Do not use a sensitivity edge as a training target.
+## Use your Google Health data
+
+- Pass `--mcp-url "$GOOGLE_HEALTH_MCP_URL"` to `python3 google_health.py` to check your last 90 completed days through an existing, authorized connection.
+- Add `--birth-date YYYY-MM-DD` to calculate your score.
+- If AZM records are incomplete, the tool reports a range when it has enough data. Missing days aren’t treated as zero.
+
+## What the number means
+
+A score of 39 at age 40 means your inputs moved the paper’s risk score down by about one year. It doesn’t mean your body is literally a year younger. This is an independent implementation of the paper’s four core inputs, not a medical test or an official Google score.
