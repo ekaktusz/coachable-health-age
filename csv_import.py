@@ -6,10 +6,10 @@ import json
 from math import isfinite
 from pathlib import Path
 
-from health_window import aggregate, report
+from health_window import DAILY_AZM_MAX, aggregate, report
 
 FIELDS = ('date', 'resting_heart_rate_bpm', 'steps', 'sleep_hours', 'active_zone_minutes')
-LIMITS = ((1, 300), (0, 150_000), (0.01, 24), (0, 2880))
+LIMITS = ((1, 300), (0, 150_000), (0.01, 24), (0, DAILY_AZM_MAX))
 
 
 def load_csv(source, end):

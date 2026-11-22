@@ -33,8 +33,9 @@ def calculate(age, rhr, steps, sleep_hours, weekly_azm):
         'active_zone_minutes': .6950 * azm / .1,
     }
     delta = fsum(contributions.values())
+    health_age = max(18, age + delta)
     return {'model': 'arxiv:2611.08568v1/core-only', 'chronological_age': age,
-            'health_age': max(18, age + delta), 'delta_years': delta,
+            'health_age': health_age, 'delta_years': health_age - age, 'raw_delta_years': delta,
             'contributions_years': contributions}
 
 

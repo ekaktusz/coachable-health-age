@@ -1,13 +1,15 @@
 """Read-only use of an already authorized Google Health MCP endpoint."""
 import argparse
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 import json
 from math import isfinite
 from urllib.parse import urlsplit
 import urllib.request
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from health_window import aggregate, report
+from health_window import DAILY_AZM_MAX, aggregate, report
+
+MCP_VERSIONS = {'2025-03-26', '2025-06-18', '2025-11-25'}
 
 
 def validate_endpoint(url, allow_loopback_http=False):
@@ -25,6 +27,20 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+def sse_messages(response):
+    data = []
+    for raw_line in response:
+        line = raw_line.rstrip(b'\r\n')
+        if not line:
+            if data:
+                yield json.loads(b'\n'.join(data))
+                data.clear()
+        else:
+            field, separator, value = line.partition(b':')
+            if field == b'data':
+                data.append(value.removeprefix(b' ') if separator else b'')
+
+
 class HealthMCP:
     def __init__(self, url, *, allow_loopback_http=False):
         validate_endpoint(url, allow_loopback_http)
@@ -34,7 +50,10 @@ class HealthMCP:
         self.id = 0
         init = self.rpc('initialize', {'protocolVersion': '2025-06-18', 'capabilities': {},
                                       'clientInfo': {'name': 'coachable-health-age', 'version': '0.1'}})
-        self.headers['MCP-Protocol-Version'] = init['protocolVersion']
+        version = init.get('protocolVersion')
+        if not isinstance(version, str) or version not in MCP_VERSIONS:
+            raise ValueError('Unsupported MCP protocol version')
+        self.headers['MCP-Protocol-Version'] = version
         self.rpc('notifications/initialized', {}, notification=True)
 
     def rpc(self, method, params, notification=False):
@@ -44,33 +63,42 @@ class HealthMCP:
             payload['id'] = self.id
         req = urllib.request.Request(self.url, json.dumps(payload).encode(), self.headers)
         with self.opener.open(req, timeout=45) as response:
-            if session := response.headers.get('Mcp-Session-Id'):
-                self.headers['Mcp-Session-Id'] = session
             if notification:
                 return None
-            if response.headers.get_content_type() == 'text/event-stream':
-                for line in response:
-                    if line.startswith(b'data:'):
-                        doc = json.loads(line[5:])
-                        if doc.get('id') == self.id:
-                            break
-                else:
-                    raise ValueError('No response for MCP request')
+            content_type = response.headers.get_content_type()
+            if content_type == 'text/event-stream':
+                messages = sse_messages(response)
+            elif content_type == 'application/json':
+                messages = (json.load(response),)
             else:
-                doc = json.load(response)
-        if 'error' in doc:
-            raise ValueError(f'MCP RPC failed: {method}, code {doc["error"].get("code")}')
-        return doc['result']
+                raise ValueError('Expected JSON or an event stream from the MCP endpoint')
+            for doc in messages:
+                if not isinstance(doc, dict) or doc.get('id') != payload['id'] or doc.get('jsonrpc') != '2.0':
+                    continue
+                if 'error' in doc:
+                    raise ValueError(f'MCP RPC failed: {method}')
+                if not isinstance(doc.get('result'), dict):
+                    raise ValueError(f'Invalid MCP result: {method}')
+                if method == 'initialize' and (session := response.headers.get('Mcp-Session-Id')):
+                    self.headers['Mcp-Session-Id'] = session
+                return doc['result']
+            raise ValueError(f'No matching MCP response: {method}')
 
     def read(self, verb, **args):
         result = self.rpc('tools/call', {'name': 'google_health_' + verb, 'arguments': {
             'privacy_mode': 'structured', 'response_format': 'json', **args}})
-        try:
-            doc = json.loads(result['content'][0]['text'])
-        except (KeyError, IndexError, json.JSONDecodeError):
-            doc = {}
-        if result.get('isError') or 'data' not in doc:
-            raise ValueError(f'Google Health read failed: {verb} ({args.get("data_type", "settings")})')
+        target = f'{verb} ({args.get("data_type", "settings")})'
+        if result.get('isError'):
+            raise ValueError(f'Google Health read failed: {target}; check connector authorization and read scopes')
+        if 'structuredContent' in result:
+            doc = result['structuredContent']
+        else:
+            try:
+                doc = json.loads(result['content'][0]['text'])
+            except (KeyError, IndexError, TypeError, json.JSONDecodeError):
+                doc = None
+        if not isinstance(doc, dict) or not isinstance(doc.get('data'), dict):
+            raise ValueError(f'Invalid Google Health response: {target}')
         return doc['data']
 
     def pages(self, verb, key, **args):
@@ -79,8 +107,11 @@ class HealthMCP:
         while True:
             if key not in page and page.keys() - {'nextPageToken'}:
                 raise ValueError(f'Unexpected {verb} response')
-            yield from page.get(key, [])
-            token = page.get('nextPageToken')
+            rows = page.get(key, [])
+            token = page.get('nextPageToken', '')
+            if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows) or not isinstance(token, str):
+                raise ValueError(f'Unexpected {verb} response')
+            yield from rows
             if not token:
                 return
             if token in seen or len(seen) >= 200:
@@ -93,14 +124,54 @@ def date_field(obj):
     return date(obj['year'], obj['month'], obj['day'])
 
 
+def number(raw, label, *, integer=False):
+    try:
+        if type(raw) not in (int, float, str):
+            raise ValueError
+        value = float(raw)
+        if not isfinite(value) or (integer and not value.is_integer()):
+            raise ValueError
+    except (ValueError, OverflowError):
+        raise ValueError(f'Invalid {label}') from None
+    return value
+
+
+def azm_total(zones):
+    if not isinstance(zones, dict):
+        raise ValueError('Invalid Active Zone Minutes')
+    keys = ('sumInCardioHeartZone', 'sumInPeakHeartZone', 'sumInFatBurnHeartZone')
+    values = [number(zones[k], 'Active Zone Minutes', integer=True) for k in keys if k in zones]
+    if not values:
+        return None
+    if any(v < 0 for v in values):
+        raise ValueError('Invalid Active Zone Minutes')
+    return sum(values)
+
+
+def wake_date(interval, account_tz):
+    if 'civilEndTime' in interval:
+        return date_field(interval['civilEndTime']['date'])
+    end = datetime.fromisoformat(interval['endTime'])
+    if end.tzinfo is None:
+        raise ValueError('Sleep end time has no UTC offset')
+    if 'endUtcOffset' in interval:
+        offset = interval['endUtcOffset']
+        if not isinstance(offset, str) or not offset.endswith('s'):
+            raise ValueError('Invalid sleep wake UTC offset')
+        local = timezone(timedelta(seconds=number(offset[:-1], 'sleep wake UTC offset')))
+    else:
+        local = account_tz
+    return end.astimezone(local).date()
+
+
 def normalized(rows, start, end, low, high):
     out = {}
     conflicts = set()
     for day, raw in rows:
         if not start <= day < end:
             continue
-        value = float(raw)
-        if not isfinite(value) or not low <= value <= high:
+        value = number(raw, 'source measurement')
+        if not low <= value <= high:
             raise ValueError('Invalid source measurement')
         if day in out and out[day] != value:
             conflicts.add(day)
@@ -109,7 +180,13 @@ def normalized(rows, start, end, low, high):
 
 
 def load_window(client, end=None):
-    tz = ZoneInfo(client.read('get_settings')['timeZone'])
+    name = client.read('get_settings').get('timeZone')
+    if not isinstance(name, str) or not name:
+        raise ValueError('Google Health settings did not provide a time zone')
+    try:
+        tz = ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError):
+        raise ValueError('Google Health time zone unavailable; check settings or install Python tzdata') from None
     today = datetime.now(tz).date()
     end = end or today
     if end > today:
@@ -127,25 +204,20 @@ def load_window(client, end=None):
         return client.pages('daily_rollup', 'rollupDataPoints', data_type=slug,
                             start_date=str(start), end_date=str(end), page_size=30)
 
-    def midnight_utc(d):
-        return datetime.combine(d, time(), tz).astimezone(timezone.utc).isoformat().replace('+00:00', 'Z')
 
     rhr = ((date_field(x['date']), x['beatsPerMinute']) for row in reconcile(
         'daily-resting-heart-rate', 'daily_resting_heart_rate.date', start, end)
         for x in [row['dailyRestingHeartRate']])
     steps = ((date_field(row['civilStartTime']['date']), row['steps']['countSum'])
              for row in rollup('steps') if 'countSum' in row.get('steps', {}))
-    zone_keys = ('sumInCardioHeartZone', 'sumInPeakHeartZone', 'sumInFatBurnHeartZone')
-    azm = ((date_field(row['civilStartTime']['date']), sum(int(x[k]) for k in zone_keys if k in x))
-           for row in rollup('active-zone-minutes') for x in [row.get('activeZoneMinutes', {})]
-           if x.keys() & set(zone_keys))
-    sleep = ((datetime.fromisoformat(x['interval']['endTime']).astimezone(tz).date(),
-              float(x['summary']['minutesAsleep']) / 60) for row in reconcile(
-        'sleep', 'sleep.interval.end_time', midnight_utc(start), midnight_utc(end))
+    azm = ((date_field(row['civilStartTime']['date']), total)
+           for row in rollup('active-zone-minutes') if (total := azm_total(row.get('activeZoneMinutes', {}))) is not None)
+    sleep = ((wake_date(x['interval'], tz), number(x['summary']['minutesAsleep'], 'sleep minutes') / 60)
+             for row in reconcile('sleep', 'sleep.interval.civil_end_time', start, end)
         for x in [row['sleep']] if x.get('metadata', {}).get('mainSleep') is True
         and 'minutesAsleep' in x.get('summary', {}))
     pairs = [normalized(rows, start, end, lo, hi) for rows, lo, hi in (
-        (rhr, 1, 300), (steps, 0, 150000), (sleep, 0.01, 24), (azm, 0, 2880))]
+        (rhr, 1, 300), (steps, 0, 150000), (sleep, 0.01, 24), (azm, 0, DAILY_AZM_MAX))]
     coverage = aggregate(start, end, *(p[0] for p in pairs))
     coverage['conflicting_days_dropped'] = dict(zip(coverage['observed_days'], (p[1] for p in pairs)))
     return coverage

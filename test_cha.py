@@ -29,7 +29,10 @@ class CoreTests(unittest.TestCase):
         self.assertAlmostEqual(r['active_zone_minutes'], 6.95*.5*math.log(.76))
 
     def test_floor_is_separate_from_raw_delta(self):
-        self.assertEqual(calculate(19, 60, 9000, 7, 500)['health_age'], 18)
+        result = calculate(19, 60, 9000, 7, 500)
+        self.assertEqual(result['health_age'], 18)
+        self.assertEqual(result['delta_years'], -1)
+        self.assertAlmostEqual(result['raw_delta_years'], sum(result['contributions_years'].values()))
 
     def test_missing_or_invalid_input_is_not_zero(self):
         for azm in (None, float('nan'), -1, True):
