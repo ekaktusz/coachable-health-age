@@ -4,6 +4,17 @@ from health_window import aggregate, report
 
 
 class WindowTests(unittest.TestCase):
+    def test_sparse_azm_bounds_use_number_of_missing_days(self):
+        end = date(2026, 4, 1)
+        start = end - timedelta(days=90)
+        days = [end - timedelta(days=n) for n in range(1, 85)]
+        series = [{d: x for d in days} for x in (60, 8000, 7, 0)]
+        del series[3][days[0]]
+        result = report(aggregate(start, end, *series), 40)
+        self.assertEqual(result['scoring_start'], str(end - timedelta(days=84)))
+        self.assertEqual(result['missing_azm_days_in_qualifying_weeks'], 1)
+        self.assertAlmostEqual(result['coachable_health_age_bounds']['lower'], 38.166023, places=5)
+
     def test_mixed_azm_weeks_do_not_produce_a_point_estimate(self):
         end = date(2026, 4, 1)
         start = end - timedelta(days=90)
