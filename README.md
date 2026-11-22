@@ -11,7 +11,7 @@ The idea: start with your actual age, then use published links between everyday 
 - Average hours of sleep per night
 - Average weekly Active Zone Minutes (AZM)
 
-## Try it
+## Try it without an account
 
 No account or extra Python packages needed for the example:
 
@@ -22,11 +22,26 @@ python3 cha.py --age 40 --rhr 65 --steps 8500 \
 
 **Result: 39.0 years**, about one year below the example’s actual age.
 
-## Use your Google Health data
+## Use your own data
+
+**Option 1: Local CSV (no login, API key, or MCP).** Try the included synthetic file:
+
+```sh
+python3 csv_import.py examples/synthetic.csv --age 40 --end-exclusive 2025-02-05
+```
+
+- Copy the [sample CSV](examples/synthetic.csv) as a template. Use one row per local day: `date,resting_heart_rate_bpm,steps,sleep_hours,active_zone_minutes`. Record sleep on the day you woke up.
+- Leave missing measurements blank. Enter `0` only for a measured zero. Use earned **Active Zone Minutes**, not generic active minutes or workout duration. Files from wearable apps need to be mapped to these columns first.
+- Use your age at the end of the window. The tool looks back up to 90 days, ending yesterday by default. For older data, set `--end-exclusive` to the day after the last day you want included.
+
+**Option 2: Google Health MCP (automatic, read-only).**
 
 - Pass `--mcp-url "$GOOGLE_HEALTH_MCP_URL"` to `python3 google_health.py` to check your last 90 completed days through an existing, authorized connection.
 - Add `--birth-date YYYY-MM-DD` to calculate your score.
-- If AZM records are incomplete, the tool reports a range when it has enough data. Missing days aren’t treated as zero.
+
+Both imports use the same scoring rules. If enough weeks qualify but some AZM days are missing, you get an AZM sensitivity range rather than one number. If too little data qualifies, you get coverage counts without a score. See [CSV format and coverage rules](docs/csv-import.md).
+
+Keep personal CSV files and output private. The CSV importer reads locally and does not upload your data.
 
 ## What the number means
 
