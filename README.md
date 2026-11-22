@@ -1,5 +1,7 @@
 # Coachable Health Age
 
+> **Personal use only.** This project was vibe-coded with Hermes Agent and Codex. It has been tested, but hasn’t had a thorough human code review. Don’t use it for medical decisions.
+
 A Python tool for estimating **wearable-based biological age** using the [Coachable Health Age method published by Google Research](https://arxiv.org/html/2611.08568v1#S4.SS1).
 
 The idea: start with your actual age, then use published links between everyday wearable measurements and health risk to adjust it up or down. The calculator shows what each input contributed, so you can see why you got that number.
