@@ -2,9 +2,11 @@
 
 > **Personal use only.** This project was vibe-coded with Hermes Agent and Codex. It has been tested, but hasn’t had a thorough human code review. Don’t use it for medical decisions.
 
-Google Research [published a method for estimating wearable-based biological age](https://arxiv.org/html/2611.08568v1#S4.SS1) called **Coachable Health Age**. A Fitbit or Pixel Watch can already collect the inputs, but I couldn't find this particular score in the [Google Health app](https://support.google.com/googlehealth/answer/17068213?hl=en). That's why I built this calculator.
+Google Research just [published a method for estimating wearable-based biological age](https://arxiv.org/html/2611.08568v1#S4.SS1) called **Coachable Health Age**. The algorithm seems cool, and a Fitbit or Pixel Watch can already collect the inputs, but obviously Google does not plan to implement it to the [Google Health app](https://support.google.com/googlehealth/answer/17068213?hl=en) just yet. So that's why I built this calculator.
 
-The idea: start with your actual age, then use published links between everyday wearable measurements and health risk to adjust it up or down. The calculator shows what each input contributed, so you can see why you got that number.
+I actually use this through [Google Health MCP](https://github.com/davidmosiah/google-health-mcp) and my AI agents, so I can just simply ask it, "hey bro, whats my biological age lately?" and it can answer.
+
+The idea: start with your actual age, then use published links between everyday wearable measurements and health risk to adjust it up or down. The calculator also shows what each input contributed, so you can see why you got that number.
 
 ## What goes in
 
