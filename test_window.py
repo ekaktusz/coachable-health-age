@@ -1,6 +1,6 @@
 from datetime import date, timedelta
 import unittest
-from google_health import aggregate, report
+from health_window import aggregate, report
 
 
 class WindowTests(unittest.TestCase):
